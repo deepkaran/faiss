@@ -21,9 +21,6 @@ struct CodePacker;
  * is in the codes vector */
 struct IndexFlatCodes : Index {
     size_t code_size;
-    size_t mmaped_size;
-    uint8_t* volatile codes_ptr;
-    bool mmaped; // true if codes_ptr is pointing to a mmaped region
 
     /// encoded dataset, size ntotal * code_size
     std::vector<uint8_t> codes;
