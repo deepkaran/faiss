@@ -74,9 +74,9 @@ void GpuIndexIVF::init_() {
     }
 
     // here we set a low # iterations because this is typically used
-    // for large clusterings
-    // (copying IndexIVF.cpp's Level1Quantizer
+    // for large clusterings (copying IndexIVF.cpp's Level1Quantizer
     cp.niter = 10;
+
     cp.verbose = verbose;
 
     if (quantizer) {
@@ -91,6 +91,7 @@ void GpuIndexIVF::init_() {
         GpuIndexFlatConfig config = ivfConfig_.flatConfig;
         // inherit our same device
         config.device = config_.device;
+        config.use_raft = config_.use_raft;
 
         if (metric_type == faiss::METRIC_L2) {
             quantizer = new GpuIndexFlatL2(resources_, d, config);
@@ -444,14 +445,15 @@ void GpuIndexIVF::trainQuantizer_(idx_t n, const float* x) {
         printf("Training IVF quantizer on %ld vectors in %dD\n", n, d);
     }
 
+    quantizer->reset();
+
     // leverage the CPU-side k-means code, which works for the GPU
     // flat index as well
-    quantizer->reset();
     Clustering clus(this->d, nlist, this->cp);
     clus.verbose = verbose;
     clus.train(n, x, *quantizer);
-    quantizer->is_trained = true;
 
+    quantizer->is_trained = true;
     FAISS_ASSERT(quantizer->ntotal == nlist);
 }
 

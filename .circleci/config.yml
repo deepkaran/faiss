@@ -9,19 +9,14 @@ executors:
     environment:
       CONDA_ARCH: Linux-x86_64
     machine:
-      image: linux-cuda-11:2023.02.1
+      image: linux-cuda-12:default
     resource_class: gpu.nvidia.medium
   linux-arm64-cpu:
     environment:
       CONDA_ARCH: Linux-aarch64
     machine:
-      image: ubuntu-2004:current
+      image: ubuntu-2204:current
     resource_class: arm.medium
-  macosx-x86_64-cpu:
-    environment:
-      CONDA_ARCH: MacOSX-x86_64
-    macos:
-      xcode: 11.7.0  # max supported for conda build, https://circleci.com/docs/using-macos#supported-xcode-versions
   macosx-arm64-cpu:
     environment:
       CONDA_ARCH: MacOSX-arm64
@@ -30,7 +25,7 @@ executors:
     resource_class: macos.m1.large.gen1
   windows-x86_64-cpu:
     machine:
-      image: windows-server-2019-vs2019:stable
+      image: windows-server-2019-vs2019:2023.04.1
       shell: bash.exe
     resource_class: windows.medium
 
@@ -66,6 +61,9 @@ jobs:
       cuda:
         type: string
         default: ""
+      raft:
+        type: string
+        default: ""
       cuda_archs:
         type: string
         default: ""
@@ -93,6 +91,8 @@ jobs:
       - run:
           name: Install conda build tools
           command: |
+            # conda config --set solver libmamba
+            # conda config --set verbosity 3
             conda update -y -q conda
             conda install -y -q conda-build
       - when:
@@ -105,14 +105,16 @@ jobs:
                   conda config --set anaconda_upload yes
       - when:
           condition:
-              not: << parameters.label >>
+            and:
+              - not: << parameters.label >>
+              - not: << parameters.cuda >>
           steps:
             - run:
                 name: Conda build (CPU)
                 no_output_timeout: 30m
                 command: |
                   cd conda
-                  conda build faiss --python 3.10 -c pytorch -c pkgs/main -c conda-forge
+                  conda build faiss --python 3.11 -c pytorch
       - when:
           condition:
             and:
@@ -124,21 +126,63 @@ jobs:
                 no_output_timeout: 30m
                 command: |
                   cd conda
-                  conda build faiss --user pytorch --label <<parameters.label>> -c pytorch -c pkgs/main -c conda-forge
+                  conda build faiss --user pytorch --label <<parameters.label>> -c pytorch
+      - when:
+          condition:
+            and:
+              - not: << parameters.label >>
+              - << parameters.cuda >>
+              - not: << parameters.raft >>
+          steps:
+            - run:
+                name: Conda build (GPU)
+                no_output_timeout: 60m
+                command: |
+                  cd conda
+                  conda build faiss-gpu --variants '{ "cudatoolkit": "<<parameters.cuda>>", "c_compiler_version": "<<parameters.compiler_version>>", "cxx_compiler_version": "<<parameters.compiler_version>>" }' \
+                      -c pytorch -c nvidia/label/cuda-<<parameters.cuda>> -c nvidia
       - when:
           condition:
             and:
               - << parameters.label >>
               - << parameters.cuda >>
+              - not: << parameters.raft >>
           steps:
             - run:
                 name: Conda build (GPU) w/ anaconda upload
                 no_output_timeout: 60m
                 command: |
-                  sudo update-alternatives --set cuda /usr/local/cuda-<<parameters.cuda>>
                   cd conda
                   conda build faiss-gpu --variants '{ "cudatoolkit": "<<parameters.cuda>>", "c_compiler_version": "<<parameters.compiler_version>>", "cxx_compiler_version": "<<parameters.compiler_version>>" }' \
-                      --user pytorch --label <<parameters.label>> -c pytorch -c nvidia -c pkgs/main -c conda-forge
+                      --user pytorch --label <<parameters.label>> -c pytorch -c nvidia/label/cuda-<<parameters.cuda>> -c nvidia
+      - when:
+          condition:
+            and:
+              - not: << parameters.label >>
+              - << parameters.cuda >>
+              - << parameters.raft >>
+          steps:
+            - run:
+                name: Conda build (GPU w/ RAFT)
+                no_output_timeout: 60m
+                command: |
+                  cd conda
+                  conda build faiss-gpu-raft --variants '{ "cudatoolkit": "<<parameters.cuda>>", "c_compiler_version": "<<parameters.compiler_version>>", "cxx_compiler_version": "<<parameters.compiler_version>>" }' \
+                      -c pytorch -c nvidia/label/cuda-<<parameters.cuda>> -c nvidia -c rapidsai -c conda-forge
+      - when:
+          condition:
+            and:
+              - << parameters.label >>
+              - << parameters.cuda >>
+              - << parameters.raft >>
+          steps:
+            - run:
+                name: Conda build (GPU w/ RAFT) w/ anaconda upload
+                no_output_timeout: 60m
+                command: |
+                  cd conda
+                  conda build faiss-gpu-raft --variants '{ "cudatoolkit": "<<parameters.cuda>>", "c_compiler_version": "<<parameters.compiler_version>>", "cxx_compiler_version": "<<parameters.compiler_version>>" }' \
+                      --user pytorch --label <<parameters.label>> -c pytorch -c nvidia/label/cuda-<<parameters.cuda>> -c nvidia -c rapidsai -c conda-forge
 
   build_cmake:
     parameters:
@@ -148,6 +192,9 @@ jobs:
         type: string
         default: generic
       gpu:
+        type: string
+        default: "OFF"
+      raft:
         type: string
         default: "OFF"
     executor: << parameters.exec >>
@@ -165,18 +212,37 @@ jobs:
               bash miniconda.sh -b -p $HOME/miniconda
               ~/miniconda/bin/conda init
             fi
-      - when:
-          condition:
-            equal: [ "ON", << parameters.gpu >> ]
-          steps:
-            - run:
-                name: Configure CUDA
-                command: sudo update-alternatives --set cuda /usr/local/cuda-11.4
       - run:
           name: Set up environment
           command: |
+            conda config --set solver libmamba
             conda update -y -q conda
-            conda install -y -q cmake=3.23.1 make swig mkl=2021 mkl-devel=2021 numpy scipy pytest gxx_linux-64 sysroot_linux-64=2.17 -c pkgs/main -c conda-forge
+      - when:
+          condition:
+            equal: [ "OFF", << parameters.raft >> ]
+          steps:
+            - run:
+                name: Install env using main channel
+                command: |
+                  conda install -y -q python=3.11 cmake make swig=4.0.2 mkl=2023 mkl-devel=2023 numpy scipy pytest gxx_linux-64 sysroot_linux-64
+      - when:
+          condition:
+            equal: [ "ON", << parameters.raft >> ]
+          steps:
+            - run:
+                name: Install env using conda-forge channel
+                command: |
+                  conda install -y -q python=3.11 cmake make swig=4.0.2 mkl=2023 mkl-devel=2023 numpy scipy pytest gxx_linux-64 sysroot_linux-64=2.28 libraft cuda-version=11.8 cuda-toolkit -c rapidsai-nightly -c "nvidia/label/cuda-11.8.0" -c conda-forge
+      - when:
+          condition:
+            and:
+              - equal: [ "ON", << parameters.gpu >> ]
+              - equal: [ "OFF", << parameters.raft >> ]
+          steps:
+            - run:
+                name: Install CUDA
+                command: |
+                  conda install -y -q cuda-toolkit -c "nvidia/label/cuda-11.8.0"
       - run:
           name: Build all targets
           no_output_timeout: 30m
@@ -185,8 +251,9 @@ jobs:
             conda activate
             cmake -B build \
                   -DBUILD_TESTING=ON \
-                  -DBUILD_SHARED_LIBS=OFF \
+                  -DBUILD_SHARED_LIBS=ON \
                   -DFAISS_ENABLE_GPU=<< parameters.gpu >> \
+                  -DFAISS_ENABLE_RAFT=<< parameters.raft >> \
                   -DFAISS_OPT_LEVEL=<< parameters.opt_level >> \
                   -DFAISS_ENABLE_C_API=ON \
                   -DPYTHON_EXECUTABLE=$(which python) \
@@ -222,7 +289,7 @@ jobs:
             - run:
                 name: Python tests (CPU + GPU)
                 command: |
-                  conda install -y -q pytorch pytorch-cuda -c pytorch -c nvidia
+                  conda install -y -q pytorch pytorch-cuda=11.8 -c pytorch -c nvidia/label/cuda-11.8.0
                   pytest --junitxml=test-results/pytest/results.xml tests/test_*.py
                   pytest --junitxml=test-results/pytest/results-torch.xml tests/torch_*.py
                   cp tests/common_faiss_tests.py faiss/gpu/test
@@ -254,25 +321,28 @@ workflows:
           exec: linux-x86_64-cpu
           opt_level: "avx2"
       - build_cmake:
+          name: Linux x86_64 AVX512 (cmake)
+          exec: linux-x86_64-cpu
+          opt_level: "avx512"
+      - build_cmake:
           name: Linux x86_64 GPU (cmake)
           exec: linux-x86_64-gpu
           gpu: "ON"
           requires:
-            - Linux x86_64 (cmake)
+            - Linux x86_64 AVX2 (cmake)
+      - build_cmake:
+          name: Linux x86_64 GPU w/ RAFT (cmake)
+          exec: linux-x86_64-gpu
+          gpu: "ON"
+          raft: "ON"
+          requires:
+            - Linux x86_64 GPU (cmake)
       - build_conda:
           name: Linux x86_64 (conda)
           exec: linux-x86_64-cpu
       - build_conda:
-          name: OSX x86_64 (conda)
-          exec: macosx-x86_64-cpu
-      - build_conda:
           name: Windows x86_64 (conda)
           exec: windows-x86_64-cpu
-      - build_conda:
-          name: OSX arm64 (conda)
-          exec: macosx-arm64-cpu
-          requires:
-            - Linux arm64 (conda)
       - build_conda:
           name: Linux arm64 (conda)
           exec: linux-arm64-cpu
@@ -286,11 +356,49 @@ workflows:
             branches:
               ignore: /.*/
       - build_conda:
-          name: Linux x86_64 GPU packages (CUDA 11.4)
+          name: Linux x86_64 GPU packages (CUDA 11.4.4)
           exec: linux-x86_64-gpu
           label: main
-          cuda: "11.4"
-          cuda_archs: "60;61;70;72;75;80;86"
+          cuda: "11.4.4"
+          cuda_archs: "60-real;61-real;62-real;70-real;72-real;75-real;80;86-real"
+          compiler_version: "11.2"
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+      - build_conda:
+          name: Linux x86_64 GPU w/ RAFT packages (CUDA 11.8.0)
+          exec: linux-x86_64-gpu
+          label: main
+          raft: "ON"
+          cuda: "11.8.0"
+          cuda_archs: "70-real;72-real;75-real;80;86-real"
+          compiler_version: "11.2"
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+      - build_conda:
+          name: Linux x86_64 GPU packages (CUDA 12.1.1)
+          exec: linux-x86_64-gpu
+          label: main
+          cuda: "12.1.1"
+          cuda_archs: "70-real;72-real;75-real;80;86-real"
+          compiler_version: "11.2"
+          filters:
+            tags:
+              only: /^v.*/
+            branches:
+              ignore: /.*/
+      - build_conda:
+          name: Linux x86_64 GPU w/ RAFT packages (CUDA 12.1.1)
+          exec: linux-x86_64-gpu
+          label: main
+          raft: "ON"
+          cuda: "12.1.1"
+          cuda_archs: "70-real;72-real;75-real;80;86-real"
           compiler_version: "11.2"
           filters:
             tags:
@@ -300,15 +408,6 @@ workflows:
       - build_conda:
           name: Windows x86_64 packages
           exec: windows-x86_64-cpu
-          label: main
-          filters:
-            tags:
-              only: /^v.*/
-            branches:
-              ignore: /.*/
-      - build_conda:
-          name: OSX x86_64 packages
-          exec: macosx-x86_64-cpu
           label: main
           filters:
             tags:
@@ -348,19 +447,38 @@ workflows:
           exec: linux-x86_64-cpu
           label: nightly
       - build_conda:
-          name: Linux x86_64 GPU nightlies (CUDA 11.4)
+          name: Linux x86_64 GPU nightlies (CUDA 11.4.4)
           exec: linux-x86_64-gpu
-          cuda: "11.4"
-          cuda_archs: "60;61;70;72;75;80;86"
-          compiler_version: "11.2"
           label: nightly
+          cuda: "11.4.4"
+          cuda_archs: "60-real;61-real;62-real;70-real;72-real;75-real;80;86-real"
+          compiler_version: "11.2"
+      - build_conda:
+          name: Linux x86_64 GPU w/ RAFT nightlies (CUDA 11.8.0)
+          exec: linux-x86_64-gpu
+          label: nightly
+          raft: "ON"
+          cuda: "11.8.0"
+          cuda_archs: "70-real;72-real;75-real;80;86-real"
+          compiler_version: "11.2"
+      - build_conda:
+          name: Linux x86_64 GPU nightlies (CUDA 12.1.1)
+          exec: linux-x86_64-gpu
+          label: nightly
+          cuda: "12.1.1"
+          cuda_archs: "70-real;72-real;75-real;80;86-real"
+          compiler_version: "11.2"
+      - build_conda:
+          name: Linux x86_64 GPU w/ RAFT nightlies (CUDA 12.1.1)
+          exec: linux-x86_64-gpu
+          label: nightly
+          raft: "ON"
+          cuda: "12.1.1"
+          cuda_archs: "70-real;72-real;75-real;80;86-real"
+          compiler_version: "11.2"
       - build_conda:
           name: Windows x86_64 nightlies
           exec: windows-x86_64-cpu
-          label: nightly
-      - build_conda:
-          name: OSX x86_64 nightlies
-          exec: macosx-x86_64-cpu
           label: nightly
       - build_conda:
           name: OSX arm64 nightlies
