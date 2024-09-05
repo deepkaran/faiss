@@ -32,3 +32,37 @@ int faiss_SearchParametersIVF_new_with_sel(
     }
     CATCH_AND_HANDLE
 }
+
+int faiss_Search_closest_eligible_centroids(
+        FaissIndex* index,
+        float* query,
+        int n, // top n centroids.
+        float* centroid_distances,
+        idx_t* centroid_ids) {
+    try {
+        faiss::IndexIVF* index_ivf = reinterpret_cast<IndexIVF*>(index); 
+        assert(index_ivf);
+
+        index_ivf->quantizer->search(1, query, n, centroid_distances, centroid_ids);
+    }
+    CATCH_AND_HANDLE
+}
+
+int faiss_IndexIVF_search_preassigned_with_params(
+        const FaissIndexIVF* index,
+        idx_t n,
+        const float* x,
+        idx_t k,
+        const idx_t* assign,
+        const float* centroid_dis,
+        float* distances,
+        idx_t* labels,
+        int store_pairs,
+        const FaissSearchParametersIVF* params) {
+    try {
+        reinterpret_cast<const IndexIVF*>(index)->search_preassigned(
+                n, x, k, assign, centroid_dis, distances, labels, store_pairs,
+                reinterpret_cast<const faiss::SearchParametersIVF*>(params));
+    }
+    CATCH_AND_HANDLE
+}
