@@ -32,3 +32,21 @@ int faiss_SearchParametersIVF_new_with_sel(
     }
     CATCH_AND_HANDLE
 }
+
+int faiss_Search_closest_eligible_centroids(
+        FaissIndex* index,
+        float* query,
+        FaissSearchParameters* params,
+        float* centroid_distances,
+        idx_t* centroid_ids) {
+    try {
+        reinterpret_cast<const faiss::Index*>(index)->search(
+                1,
+                query,
+                500,
+                centroid_distances,
+                centroid_ids,
+                reinterpret_cast<const faiss::SearchParameters*>(params));
+    }
+    CATCH_AND_HANDLE
+}
