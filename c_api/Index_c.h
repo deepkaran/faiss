@@ -115,7 +115,7 @@ int faiss_Index_search(
         idx_t* labels);
 
 /**
- * query n vectors of dimension d with seach parameters to the index.
+ * query n vectors of dimension d with search parameters to the index.
  *
  * return at most k vectors. If there are not enough results for a query,
  * the result is padded with -1s.
@@ -274,6 +274,8 @@ int faiss_Index_sa_decode(
         idx_t n,
         const uint8_t* bytes,
         float* x);
+
+void faiss_set_omp_threads(unsigned int n);
 
 #ifdef __cplusplus
 }

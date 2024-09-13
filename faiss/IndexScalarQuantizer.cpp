@@ -14,6 +14,7 @@
 
 #include <omp.h>
 
+
 #include <faiss/impl/AuxIndexStructures.h>
 #include <faiss/impl/FaissAssert.h>
 #include <faiss/impl/IDSelector.h>
@@ -58,12 +59,15 @@ void IndexScalarQuantizer::search(
     FAISS_THROW_IF_NOT(
             metric_type == METRIC_L2 || metric_type == METRIC_INNER_PRODUCT);
 
-#pragma omp parallel if (n > 1)
+// Adding an openMP guard here to spawn threads only if n > 1, where n is the number
+// of queries in the batch. If n = 1, then the search is done in a single thread.
+// This is done to avoid the overhead of spawning threads for executing sequential code.
+// This is for bleve, more in: MB-61930
+#pragma omp parallel if (n > 1) num_threads(num_omp_threads)
     {
-        InvertedListScanner* scanner =
-                sq.select_InvertedListScanner(metric_type, nullptr, true, sel);
+        std::unique_ptr<InvertedListScanner> scanner(
+                sq.select_InvertedListScanner(metric_type, nullptr, true, sel));
 
-        ScopeDeleter1<InvertedListScanner> del(scanner);
         scanner->list_no = 0; // directly the list number
 
 #pragma omp for
@@ -122,21 +126,28 @@ IndexIVFScalarQuantizer::IndexIVFScalarQuantizer(
         size_t nlist,
         ScalarQuantizer::QuantizerType qtype,
         MetricType metric,
-        bool encode_residual)
-        : IndexIVF(quantizer, d, nlist, 0, metric),
-          sq(d, qtype),
-          by_residual(encode_residual) {
+        bool by_residual)
+        : IndexIVF(quantizer, d, nlist, 0, metric), sq(d, qtype) {
     code_size = sq.code_size;
+    this->by_residual = by_residual;
     // was not known at construction time
     invlists->code_size = code_size;
     is_trained = false;
 }
 
-IndexIVFScalarQuantizer::IndexIVFScalarQuantizer()
-        : IndexIVF(), by_residual(true) {}
+IndexIVFScalarQuantizer::IndexIVFScalarQuantizer() : IndexIVF() {
+    by_residual = true;
+}
 
-void IndexIVFScalarQuantizer::train_residual(idx_t n, const float* x) {
-    sq.train_residual(n, x, quantizer, by_residual, verbose);
+void IndexIVFScalarQuantizer::train_encoder(
+        idx_t n,
+        const float* x,
+        const idx_t* assign) {
+    sq.train(n, x);
+}
+
+idx_t IndexIVFScalarQuantizer::train_encoder_num_vectors() const {
+    return 100000;
 }
 
 void IndexIVFScalarQuantizer::encode_vectors(
@@ -149,7 +160,7 @@ void IndexIVFScalarQuantizer::encode_vectors(
     size_t coarse_size = include_listnos ? coarse_code_size() : 0;
     memset(codes, 0, (code_size + coarse_size) * n);
 
-#pragma omp parallel if (n > 1000)
+#pragma omp parallel if (n > 1000) num_threads(num_omp_threads)
     {
         std::vector<float> residual(d);
 
@@ -177,7 +188,7 @@ void IndexIVFScalarQuantizer::sa_decode(idx_t n, const uint8_t* codes, float* x)
     std::unique_ptr<ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
     size_t coarse_size = coarse_code_size();
 
-#pragma omp parallel if (n > 1000)
+#pragma omp parallel if (n > 1000) num_threads(num_omp_threads)
     {
         std::vector<float> residual(d);
 
@@ -201,15 +212,15 @@ void IndexIVFScalarQuantizer::add_core(
         idx_t n,
         const float* x,
         const idx_t* xids,
-        const idx_t* coarse_idx) {
+        const idx_t* coarse_idx,
+        void* inverted_list_context) {
     FAISS_THROW_IF_NOT(is_trained);
 
-    size_t nadd = 0;
     std::unique_ptr<ScalarQuantizer::SQuantizer> squant(sq.select_quantizer());
 
     DirectMapAdd dm_add(direct_map, n, xids);
 
-#pragma omp parallel reduction(+ : nadd)
+#pragma omp parallel num_threads(num_omp_threads)
     {
         std::vector<float> residual(d);
         std::vector<uint8_t> one_code(code_size);
@@ -231,10 +242,10 @@ void IndexIVFScalarQuantizer::add_core(
                 memset(one_code.data(), 0, code_size);
                 squant->encode_vector(xi, one_code.data());
 
-                size_t ofs = invlists->add_entry(list_no, id, one_code.data());
+                size_t ofs = invlists->add_entry(
+                        list_no, id, one_code.data(), inverted_list_context);
 
                 dm_add.add(i, list_no, ofs);
-                nadd++;
 
             } else if (rank == 0 && list_no == -1) {
                 dm_add.add(i, -1, 0);

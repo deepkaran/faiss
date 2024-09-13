@@ -27,6 +27,15 @@ int faiss_SearchParametersIVF_new_with_sel(
         FaissSearchParametersIVF** p_sp,
         FaissIDSelector* sel);
 
+int faiss_Search_closest_eligible_centroids(
+        FaissIndex* index,
+        float* query,
+         FaissSearchParameters* params,
+        float* centroid_distances,
+        idx_t* centroid_ids
+);
+
+
 #ifdef __cplusplus
 }
 #endif

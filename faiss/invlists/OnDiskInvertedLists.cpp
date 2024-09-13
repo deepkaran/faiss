@@ -420,7 +420,7 @@ void OnDiskInvertedLists::update_entries(
     FAISS_THROW_IF_NOT(!read_only);
     if (n_entry == 0)
         return;
-    const List& l = lists[list_no];
+    [[maybe_unused]] const List& l = lists[list_no];
     assert(n_entry + offset <= l.size);
     idx_t* ids = const_cast<idx_t*>(get_ids(list_no));
     memcpy(ids + offset, ids_in, sizeof(ids_in[0]) * n_entry);
@@ -537,7 +537,7 @@ void OnDiskInvertedLists::free_slot(size_t offset, size_t capacity) {
         it++;
     }
 
-    size_t inf = 1UL << 60;
+    size_t inf = ((size_t)1) << 60;
 
     size_t end_prev = inf;
     if (it != slots.begin()) {
@@ -546,7 +546,7 @@ void OnDiskInvertedLists::free_slot(size_t offset, size_t capacity) {
         end_prev = prev->offset + prev->capacity;
     }
 
-    size_t begin_next = 1L << 60;
+    size_t begin_next = ((size_t)1) << 60;
     if (it != slots.end()) {
         begin_next = it->offset;
     }
@@ -611,7 +611,7 @@ size_t OnDiskInvertedLists::merge_from(
     size_t nmerged = 0;
     double t0 = getmillisecs(), last_t = t0;
 
-#pragma omp parallel for
+#pragma omp parallel for num_threads(num_omp_threads)
     for (size_t j = 0; j < nlist; j++) {
         List& l = lists[j];
         for (int i = 0; i < n_il; i++) {

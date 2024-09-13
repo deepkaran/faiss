@@ -5,12 +5,16 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-#include <faiss/gpu/impl/scan/IVFInterleavedImpl.cuh>
+// -*- c++ -*-
+
+
+#include <faiss/OMPConfig.h>
 
 namespace faiss {
-namespace gpu {
 
-IVF_INTERLEAVED_IMPL(128, 1, 1)
+    unsigned int num_omp_threads = std::thread::hardware_concurrency();
 
+    void set_num_omp_threads(unsigned int value) {
+        num_omp_threads = value;
+    }
 }
-} // namespace faiss

@@ -40,6 +40,8 @@
 #include <faiss/IndexBinaryHNSW.h>
 #include <faiss/IndexBinaryIVF.h>
 
+#include <faiss/OMPConfig.h>
+
 namespace faiss {
 
 AutoTuneCriterion::AutoTuneCriterion(idx_t nq, idx_t nnn)
@@ -89,7 +91,7 @@ double IntersectionCriterion::evaluate(const float* /*D*/, const idx_t* I)
             (gt_I.size() == gt_nnn * nq && gt_nnn >= R && nnn >= R),
             "ground truth not initialized");
     int64_t n_ok = 0;
-#pragma omp parallel for reduction(+ : n_ok)
+#pragma omp parallel for reduction(+ : n_ok) num_threads(num_omp_threads)
     for (idx_t q = 0; q < nq; q++) {
         n_ok += ranklist_intersection_size(
                 R, &gt_I[q * gt_nnn], R, I + q * nnn);
@@ -152,12 +154,10 @@ bool OperatingPoints::add(
             return false;
         }
     }
-    { // remove non-optimal points from array
-        int i = a.size() - 1;
-        while (i > 0) {
-            if (a[i].t < a[i - 1].t)
-                a.erase(a.begin() + (i - 1));
-            i--;
+    // remove non-optimal points from array
+    for (int i = a.size() - 1; i > 0; --i) {
+        if (a[i].t < a[i - 1].t) {
+            a.erase(a.begin() + (i - 1));
         }
     }
     return true;
@@ -286,6 +286,8 @@ std::string ParameterSpace::combination_name(size_t cno) const {
     char buf[1000], *wp = buf;
     *wp = 0;
     for (int i = 0; i < parameter_ranges.size(); i++) {
+        FAISS_THROW_IF_NOT_MSG(
+                buf + 1000 - wp >= 0, "Overflow detected in snprintf");
         const ParameterRange& pr = parameter_ranges[i];
         size_t j = cno % pr.values.size();
         cno /= pr.values.size();
@@ -334,7 +336,7 @@ ParameterRange& ParameterSpace::add_range(const std::string& name) {
             return pr;
         }
     }
-    parameter_ranges.push_back(ParameterRange());
+    parameter_ranges.emplace_back();
     parameter_ranges.back().name = name;
     return parameter_ranges.back();
 }
@@ -698,7 +700,7 @@ void ParameterSpace::explore(
 
         do {
             if (thread_over_batches) {
-#pragma omp parallel for
+#pragma omp parallel for num_threads(num_omp_threads)
                 for (idx_t q0 = 0; q0 < nq; q0 += batchsize) {
                     size_t q1 = q0 + batchsize;
                     if (q1 > nq)

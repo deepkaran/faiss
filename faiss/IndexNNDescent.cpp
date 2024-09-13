@@ -11,6 +11,7 @@
 
 #include <omp.h>
 
+
 #include <cinttypes>
 #include <cstdio>
 #include <cstdlib>
@@ -154,12 +155,12 @@ void IndexNNDescent::search(
     for (idx_t i0 = 0; i0 < n; i0 += check_period) {
         idx_t i1 = std::min(i0 + check_period, n);
 
-#pragma omp parallel
+#pragma omp parallel num_threads(num_omp_threads)
         {
             VisitedTable vt(ntotal);
 
-            DistanceComputer* dis = storage_distance_computer(storage);
-            ScopeDeleter1<DistanceComputer> del(dis);
+            std::unique_ptr<DistanceComputer> dis(
+                    storage_distance_computer(storage));
 
 #pragma omp for
             for (idx_t i = i0; i < i1; i++) {
@@ -197,8 +198,7 @@ void IndexNNDescent::add(idx_t n, const float* x) {
     storage->add(n, x);
     ntotal = storage->ntotal;
 
-    DistanceComputer* dis = storage_distance_computer(storage);
-    ScopeDeleter1<DistanceComputer> del(dis);
+    std::unique_ptr<DistanceComputer> dis(storage_distance_computer(storage));
     nndescent.build(*dis, ntotal, verbose);
 }
 

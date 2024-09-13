@@ -154,7 +154,7 @@ NNDescent::NNDescent(const int d, const int K) : K(K), d(d) {
 NNDescent::~NNDescent() {}
 
 void NNDescent::join(DistanceComputer& qdis) {
-#pragma omp parallel for default(shared) schedule(dynamic, 100)
+#pragma omp parallel for default(shared) schedule(dynamic, 100) num_threads(num_omp_threads)
     for (int n = 0; n < ntotal; n++) {
         graph[n].join([&](int i, int j) {
             if (i != j) {
@@ -171,7 +171,7 @@ void NNDescent::join(DistanceComputer& qdis) {
 void NNDescent::update() {
     // Step 1.
     // Clear all nn_new and nn_old
-#pragma omp parallel for
+#pragma omp parallel for num_threads(num_omp_threads)
     for (int i = 0; i < ntotal; i++) {
         std::vector<int>().swap(graph[i].nn_new);
         std::vector<int>().swap(graph[i].nn_old);
@@ -181,7 +181,7 @@ void NNDescent::update() {
     // Compute the number of neighbors which is new i.e. flag is true
     // in the candidate pool. This must not exceed the sample number S.
     // That means We only select S new neighbors.
-#pragma omp parallel for
+#pragma omp parallel for num_threads(num_omp_threads)
     for (int n = 0; n < ntotal; ++n) {
         auto& nn = graph[n];
         std::sort(nn.pool.begin(), nn.pool.end());
@@ -195,8 +195,9 @@ void NNDescent::update() {
         int l = 0;
 
         while ((l < maxl) && (c < S)) {
-            if (nn.pool[l].flag)
+            if (nn.pool[l].flag) {
                 ++c;
+            }
             ++l;
         }
         nn.M = l;
@@ -205,7 +206,7 @@ void NNDescent::update() {
     // Step 3.
     // Find reverse links for each node
     // Randomly choose R reverse links.
-#pragma omp parallel
+#pragma omp parallel num_threads(num_omp_threads)
     {
         std::mt19937 rng(random_seed * 5081 + omp_get_thread_num());
 #pragma omp for
@@ -258,7 +259,7 @@ void NNDescent::update() {
     // Step 4.
     // Combine the forward and the reverse links
     // R = 0 means no reverse links are used.
-#pragma omp parallel for
+#pragma omp parallel for num_threads(num_omp_threads)
     for (int i = 0; i < ntotal; ++i) {
         auto& nn_new = graph[i].nn_new;
         auto& nn_old = graph[i].nn_old;
@@ -301,12 +302,13 @@ void NNDescent::generate_eval_set(
         std::vector<int>& c,
         std::vector<std::vector<int>>& v,
         int N) {
-#pragma omp parallel for
+#pragma omp parallel for num_threads(num_omp_threads)
     for (int i = 0; i < c.size(); i++) {
         std::vector<Neighbor> tmp;
         for (int j = 0; j < N; j++) {
-            if (c[i] == j)
+            if (c[i] == j) {
                 continue; // skip itself
+            }
             float dist = qdis.symmetric_dis(c[i], j);
             tmp.push_back(Neighbor(j, dist, true));
         }
@@ -349,7 +351,7 @@ void NNDescent::init_graph(DistanceComputer& qdis) {
             graph.push_back(Nhood(L, S, rng, (int)ntotal));
         }
     }
-#pragma omp parallel
+#pragma omp parallel num_threads(num_omp_threads)
     {
         std::mt19937 rng(random_seed * 7741 + omp_get_thread_num());
 #pragma omp for
@@ -360,8 +362,9 @@ void NNDescent::init_graph(DistanceComputer& qdis) {
 
             for (int j = 0; j < S; j++) {
                 int id = tmp[j];
-                if (id == i)
+                if (id == i) {
                     continue;
+                }
                 float dist = qdis.symmetric_dis(i, id);
 
                 graph[i].pool.push_back(Neighbor(id, dist, true));
@@ -374,6 +377,10 @@ void NNDescent::init_graph(DistanceComputer& qdis) {
 
 void NNDescent::build(DistanceComputer& qdis, const int n, bool verbose) {
     FAISS_THROW_IF_NOT_MSG(L >= K, "L should be >= K in NNDescent.build");
+    FAISS_THROW_IF_NOT_FMT(
+            n > NUM_EVAL_POINTS,
+            "NNDescent.build cannot build a graph smaller than %d",
+            int(NUM_EVAL_POINTS));
 
     if (verbose) {
         printf("Parameters: K=%d, S=%d, R=%d, L=%d, iter=%d\n",
@@ -403,7 +410,7 @@ void NNDescent::build(DistanceComputer& qdis, const int n, bool verbose) {
     has_built = true;
 
     if (verbose) {
-        printf("Addes %d points into the index\n", ntotal);
+        printf("Added %d points into the index\n", ntotal);
     }
 }
 
@@ -414,30 +421,30 @@ void NNDescent::search(
         float* dists,
         VisitedTable& vt) const {
     FAISS_THROW_IF_NOT_MSG(has_built, "The index is not build yet.");
-    int L = std::max(search_L, topk);
+    int L_2 = std::max(search_L, topk);
 
     // candidate pool, the K best items is the result.
-    std::vector<Neighbor> retset(L + 1);
+    std::vector<Neighbor> retset(L_2 + 1);
 
-    // Randomly choose L points to initialize the candidate pool
-    std::vector<int> init_ids(L);
+    // Randomly choose L_2 points to initialize the candidate pool
+    std::vector<int> init_ids(L_2);
     std::mt19937 rng(random_seed);
 
-    gen_random(rng, init_ids.data(), L, ntotal);
-    for (int i = 0; i < L; i++) {
+    gen_random(rng, init_ids.data(), L_2, ntotal);
+    for (int i = 0; i < L_2; i++) {
         int id = init_ids[i];
         float dist = qdis(id);
         retset[i] = Neighbor(id, dist, true);
     }
 
     // Maintain the candidate pool in ascending order
-    std::sort(retset.begin(), retset.begin() + L);
+    std::sort(retset.begin(), retset.begin() + L_2);
 
     int k = 0;
 
-    // Stop until the smallest position updated is >= L
-    while (k < L) {
-        int nk = L;
+    // Stop until the smallest position updated is >= L_2
+    while (k < L_2) {
+        int nk = L_2;
 
         if (retset[k].flag) {
             retset[k].flag = false;
@@ -445,25 +452,28 @@ void NNDescent::search(
 
             for (int m = 0; m < K; ++m) {
                 int id = final_graph[n * K + m];
-                if (vt.get(id))
+                if (vt.get(id)) {
                     continue;
+                }
 
                 vt.set(id);
                 float dist = qdis(id);
-                if (dist >= retset[L - 1].distance)
+                if (dist >= retset[L_2 - 1].distance) {
                     continue;
+                }
 
                 Neighbor nn(id, dist, true);
-                int r = insert_into_pool(retset.data(), L, nn);
+                int r = insert_into_pool(retset.data(), L_2, nn);
 
                 if (r < nk)
                     nk = r;
             }
         }
-        if (nk <= k)
+        if (nk <= k) {
             k = nk;
-        else
+        } else {
             ++k;
+        }
     }
     for (size_t i = 0; i < topk; i++) {
         indices[i] = retset[i].id;

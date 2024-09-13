@@ -176,6 +176,14 @@ void search_single_query_template(
     } while (fe.next());
 }
 
+struct Run_search_single_query {
+    using T = void;
+    template <class HammingComputer, class... Types>
+    T f(Types... args) {
+        search_single_query_template<HammingComputer>(args...);
+    }
+};
+
 template <class SearchResults>
 void search_single_query(
         const IndexBinaryHash& index,
@@ -184,29 +192,9 @@ void search_single_query(
         size_t& n0,
         size_t& nlist,
         size_t& ndis) {
-#define HC(name) \
-    search_single_query_template<name>(index, q, res, n0, nlist, ndis);
-    switch (index.code_size) {
-        case 4:
-            HC(HammingComputer4);
-            break;
-        case 8:
-            HC(HammingComputer8);
-            break;
-        case 16:
-            HC(HammingComputer16);
-            break;
-        case 20:
-            HC(HammingComputer20);
-            break;
-        case 32:
-            HC(HammingComputer32);
-            break;
-        default:
-            HC(HammingComputerDefault);
-            break;
-    }
-#undef HC
+    Run_search_single_query r;
+    dispatch_HammingComputer(
+            index.code_size, r, index, q, res, n0, nlist, ndis);
 }
 
 } // anonymous namespace
@@ -221,7 +209,7 @@ void IndexBinaryHash::range_search(
             !params, "search params not supported for this index");
     size_t nlist = 0, ndis = 0, n0 = 0;
 
-#pragma omp parallel if (n > 100) reduction(+ : ndis, n0, nlist)
+#pragma omp parallel if (n > 100) reduction(+ : ndis, n0, nlist) num_threads(num_omp_threads)
     {
         RangeSearchPartialResult pres(result);
 
@@ -255,7 +243,7 @@ void IndexBinaryHash::search(
     using HeapForL2 = CMax<int32_t, idx_t>;
     size_t nlist = 0, ndis = 0, n0 = 0;
 
-#pragma omp parallel for if (n > 100) reduction(+ : nlist, ndis, n0)
+#pragma omp parallel for if (n > 100) reduction(+ : nlist, ndis, n0) num_threads(num_omp_threads)
     for (idx_t i = 0; i < n; i++) {
         int32_t* simi = distances + k * i;
         idx_t* idxi = labels + k * i;
@@ -349,21 +337,28 @@ namespace {
 
 template <class HammingComputer, class SearchResults>
 static void verify_shortlist(
-        const IndexBinaryFlat& index,
+        const IndexBinaryFlat* index,
         const uint8_t* q,
         const std::unordered_set<idx_t>& shortlist,
         SearchResults& res) {
-    size_t code_size = index.code_size;
-    size_t nlist = 0, ndis = 0, n0 = 0;
+    size_t code_size = index->code_size;
 
     HammingComputer hc(q, code_size);
-    const uint8_t* codes = index.xb.data();
+    const uint8_t* codes = index->xb.data();
 
     for (auto i : shortlist) {
         int dis = hc.hamming(codes + i * code_size);
         res.add(dis, i);
     }
 }
+
+struct Run_verify_shortlist {
+    using T = void;
+    template <class HammingComputer, class... Types>
+    void f(Types... args) {
+        verify_shortlist<HammingComputer>(args...);
+    }
+};
 
 template <class SearchResults>
 void search_1_query_multihash(
@@ -405,29 +400,9 @@ void search_1_query_multihash(
     ndis += shortlist.size();
 
     // verify shortlist
-
-#define HC(name) verify_shortlist<name>(*index.storage, xi, shortlist, res)
-    switch (index.code_size) {
-        case 4:
-            HC(HammingComputer4);
-            break;
-        case 8:
-            HC(HammingComputer8);
-            break;
-        case 16:
-            HC(HammingComputer16);
-            break;
-        case 20:
-            HC(HammingComputer20);
-            break;
-        case 32:
-            HC(HammingComputer32);
-            break;
-        default:
-            HC(HammingComputerDefault);
-            break;
-    }
-#undef HC
+    Run_verify_shortlist r;
+    dispatch_HammingComputer(
+            index.code_size, r, index.storage, xi, shortlist, res);
 }
 
 } // anonymous namespace
@@ -442,7 +417,7 @@ void IndexBinaryMultiHash::range_search(
             !params, "search params not supported for this index");
     size_t nlist = 0, ndis = 0, n0 = 0;
 
-#pragma omp parallel if (n > 100) reduction(+ : ndis, n0, nlist)
+#pragma omp parallel if (n > 100) reduction(+ : ndis, n0, nlist) num_threads(num_omp_threads)
     {
         RangeSearchPartialResult pres(result);
 
@@ -476,7 +451,7 @@ void IndexBinaryMultiHash::search(
     using HeapForL2 = CMax<int32_t, idx_t>;
     size_t nlist = 0, ndis = 0, n0 = 0;
 
-#pragma omp parallel for if (n > 100) reduction(+ : nlist, ndis, n0)
+#pragma omp parallel for if (n > 100) reduction(+ : nlist, ndis, n0) num_threads(num_omp_threads)
     for (idx_t i = 0; i < n; i++) {
         int32_t* simi = distances + k * i;
         idx_t* idxi = labels + k * i;
