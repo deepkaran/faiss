@@ -35,15 +35,16 @@ int faiss_SearchParametersIVF_new_with_sel(
 
 int faiss_Search_closest_eligible_centroids(
         FaissIndex* index,
+        int n,
         float* query,
-        int n, // top n centroids.
+        int k, 
         float* centroid_distances,
         idx_t* centroid_ids) {
     try {
         faiss::IndexIVF* index_ivf = reinterpret_cast<IndexIVF*>(index); 
         assert(index_ivf);
 
-        index_ivf->quantizer->search(1, query, n, centroid_distances, centroid_ids);
+        index_ivf->quantizer->search(n, query, k, centroid_distances, centroid_ids);
     }
     CATCH_AND_HANDLE
 }
