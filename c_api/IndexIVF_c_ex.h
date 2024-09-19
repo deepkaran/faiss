@@ -26,6 +26,47 @@ int faiss_IndexIVF_set_direct_map(
 int faiss_SearchParametersIVF_new_with_sel(
         FaissSearchParametersIVF** p_sp,
         FaissIDSelector* sel);
+/*
+    Return 'k' centroids in the index closest to the query vector.
+
+    @param n: number of queries.
+    @param query: query vector.
+    @param k: count of closest number of vectors.
+    @param centroid_distances: output distances, size n * k.
+    @param centroid_ids: output centroid IDs, size n * k.    
+*/
+int faiss_Search_closest_eligible_centroids(
+        FaissIndex* index,
+        int n,
+        float* query,
+        int k,
+        float* centroid_distances,
+        idx_t* centroid_ids
+);
+
+/*
+    Search the clusters whose IDs are in 'assign' and
+    return the 'k' nearest neighbours from among them.     
+
+    @param n: number of queries.
+    @param x: query vector, size n * d.
+    @param k: count of nearest neighbours to be returned for each query.
+    @param centroid_ids: output centroid IDs, size n * k. 
+    @param distance: output distances, size n * k
+    @param labels: output labels, size n * k
+*/
+int faiss_IndexIVF_search_preassigned_with_params(
+        const FaissIndexIVF* index,
+        idx_t n,
+        const float* x,
+        idx_t k,
+        const idx_t* assign,
+        const float* centroid_dis,
+        float* distances,
+        idx_t* labels,
+        int store_pairs,
+        const FaissSearchParametersIVF* params);
+
 
 #ifdef __cplusplus
 }
